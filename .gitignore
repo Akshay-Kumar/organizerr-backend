@@ -1,0 +1,4 @@
+.env
+run_organizerr_backend.bat
+torrents.db
+uploads
