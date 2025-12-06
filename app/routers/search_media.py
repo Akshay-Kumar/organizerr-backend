@@ -9,7 +9,7 @@ router = APIRouter()
 @router.get("/search_media")
 async def search_media(
         query: str = Query(..., min_length=2, description="Search query text"),
-        media_type: str = Query(..., regex="^(movie|tv|episode)$", description="Either 'movie', 'tv', or 'episode'"),
+        media_type: str = Query(..., regex="^(movie|tv|episode|music|unsorted)$", description="Either 'movie', 'tv', 'episode', 'music' or 'unsorted'"),
         year: Optional[int] = Query(None, ge=1900, le=2100),
         season: Optional[int] = Query(None, ge=1),
         episode: Optional[int] = Query(None, ge=1)
