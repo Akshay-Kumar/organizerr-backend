@@ -184,7 +184,9 @@ async def add_torrent_endpoint(
         try:
             add_torrent(info_hash, source_path, save_path=None, tags=tags)
         except Exception as e:
-            set_qb_error(Session(engine), local_rec_id, str(e))
+            # IMPORTANT: close the session properly
+            with Session(engine) as s:
+                set_qb_error(s, local_rec_id, str(e))
 
     background_tasks.add_task(_add_to_qb, info_hash_val, rec.id, source_val, tags_list)
 
@@ -252,7 +254,8 @@ async def add_torrents_batch(
         try:
             add_torrent(info_hash, source_path, save_path=None, tags=tags)
         except Exception as e:
-            set_qb_error(Session(engine), local_rec_id, str(e))
+            with Session(engine) as s:
+                set_qb_error(s, local_rec_id, str(e))
 
     total = max(len(files), len(meta_list))
 
