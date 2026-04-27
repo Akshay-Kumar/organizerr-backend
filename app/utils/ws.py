@@ -91,6 +91,7 @@ async def torrent_broadcaster():
         # Don’t poll at all if nobody is connected
         if not await manager.has_clients():
             _last_snapshot = None
+            next_run = time.monotonic() + POLL_INTERVAL  # or + 30
             continue
 
         # Prevent overlapping polls
@@ -105,7 +106,7 @@ async def torrent_broadcaster():
                         _cached_db_list = get_all_torrents(session)
                     _last_db_fetch = time.monotonic()
 
-                db_list = _cached_db_list
+                db_list = _cached_db_list or []
 
                 # qB poll with timeout + backoff
                 try:

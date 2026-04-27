@@ -2,3 +2,12 @@
 run_organizerr_backend.bat
 torrents.db
 uploads
+.idea
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Optional (good practice)
+*.py[cod]

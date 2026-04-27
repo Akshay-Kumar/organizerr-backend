@@ -58,6 +58,23 @@ class TorrentOut(BaseModel):
     }
 
 
+class FileOperationOut(BaseModel):
+    operation: Optional[str] = None
+    source: Optional[str] = None
+    destination: Optional[str] = None
+    backup: Optional[str] = None
+    timestamp: Optional[str] = None
+    success: Optional[bool] = None
+    file_size: Optional[int] = None
+    file_hash: Optional[str] = None
+    info_hash: Optional[str] = None
+
+
+class FileOperationsResponse(BaseModel):
+    count: int
+    operations: Dict[str, FileOperationOut]
+
+
 # ----------------------------
 # User schemas
 # ----------------------------

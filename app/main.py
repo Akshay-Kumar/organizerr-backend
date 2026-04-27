@@ -30,6 +30,7 @@ load_dotenv()
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "./uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_MEDIA_TYPES = {"movie", "tv", "episode", "music", "unsorted"}
+TORRENT_CATEGORY = os.getenv("TORRENT_CATEGORY", "media-organizerr")
 # FastAPI app
 app = FastAPI(title="Torrent Metadata Manager")
 app.add_middleware(
@@ -180,15 +181,16 @@ async def add_torrent_endpoint(
         )
 
     # --- Background task to add to qBittorrent ---
-    def _add_to_qb(info_hash: str, local_rec_id: int, source_path: str, tags):
+    def _add_to_qb(info_hash: str, local_rec_id: int, source_path: str, tags, category:str):
         try:
-            add_torrent(info_hash, source_path, save_path=None, tags=tags)
+            add_torrent(info_hash, source_path, save_path=None, tags=tags, category=category)
         except Exception as e:
             # IMPORTANT: close the session properly
             with Session(engine) as s:
                 set_qb_error(s, local_rec_id, str(e))
 
-    background_tasks.add_task(_add_to_qb, info_hash_val, rec.id, source_val, tags_list)
+    if background_tasks is not None and info_hash_val:
+        background_tasks.add_task(_add_to_qb, info_hash_val, rec.id, source_val, tags_list, category=TORRENT_CATEGORY)
 
     # --- Return immediately ---
     return {
@@ -250,9 +252,9 @@ async def add_torrents_batch(
     results = []
     new_records = []
 
-    def _add_to_qb(info_hash: str, local_rec_id: int, source_path: str, tags):
+    def _add_to_qb(info_hash: str, local_rec_id: int, source_path: str, tags, category: str):
         try:
-            add_torrent(info_hash, source_path, save_path=None, tags=tags)
+            add_torrent(info_hash, source_path, save_path=None, tags=tags, category=category)
         except Exception as e:
             with Session(engine) as s:
                 set_qb_error(s, local_rec_id, str(e))
@@ -382,7 +384,7 @@ async def add_torrents_batch(
                 new_records.append(rec)
 
             if background_tasks is not None and info_hash_val:
-                background_tasks.add_task(_add_to_qb, info_hash_val, rec.id, source_val, tags_list)
+                background_tasks.add_task(_add_to_qb, info_hash_val, rec.id, source_val, tags_list, category=TORRENT_CATEGORY)
 
             results.append({
                 "id": rec.id,

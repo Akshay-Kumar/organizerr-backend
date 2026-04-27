@@ -115,7 +115,11 @@ def add_torrent(
 def list_torrents():
     """Lightweight list call using the shared session (no repeated logins)."""
     qb = get_qb_client()
-    return qb.torrents_info()
+    try:
+        return qb.torrents_info()
+    except Exception:
+        qb = get_qb_client(force_relogin=True)
+        return qb.torrents_info()
 
 
 def find_torrent_by_hash(info_hash: str):
