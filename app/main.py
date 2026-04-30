@@ -17,9 +17,10 @@ from sqlmodel import SQLModel, Session
 from sqlmodel import select
 
 from app.crud import create_torrent, get_torrent, list_torrents, update_torrent, set_qb_error
-from app.models import Torrent  # <- make sure this points to your SQLModel Torrent class
+from app.models import Torrent, User  # <- make sure this points to your SQLModel Torrent class
 from app.qb_helper import add_torrent, set_torrent_tags
 from app.routers import search_media, auth, torrents
+from app.utils.deps import get_current_user
 from app.schemas import TorrentUpdate, TorrentOut
 from app.utils import ws
 from app.utils.db import engine, get_session
@@ -106,6 +107,7 @@ async def add_torrent_endpoint(
         file: UploadFile = File(None),
         background_tasks: BackgroundTasks = None,
         session: Session = Depends(get_session),
+        current_user: User = Depends(get_current_user),
 ):
     # --- Handle file upload or source ---
     if file:
@@ -163,6 +165,7 @@ async def add_torrent_endpoint(
         # Create new
         rec = create_torrent(
             session,
+            current_user=current_user,
             info_hash=info_hash_val,
             name=name_val,
             correct_name=name,
@@ -220,6 +223,7 @@ async def add_torrents_batch(
     metadata: str = Form("[]"),  # JSON string: array of metadata objects
     background_tasks: BackgroundTasks = None,
     session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Batch endpoint to upload multiple .torrent files and/or magnets.
@@ -365,6 +369,7 @@ async def add_torrents_batch(
             else:
                 rec = create_torrent(
                     session,
+                    current_user=current_user,
                     info_hash=info_hash_val,
                     name=name_val,
                     correct_name=name_override,
@@ -428,12 +433,16 @@ async def add_torrents_batch(
 # Get all torrents
 # --------------------------
 @app.get("/torrents", response_model=list[TorrentOut])
-def get_all_torrents(session: Session = Depends(get_session)):
-    items = list_torrents(session)
+def get_all_torrents(
+        session: Session = Depends(get_session),
+        current_user: User = Depends(get_current_user),
+):
+    items = list_torrents(session, current_user)
     out = []
     for t in items:
         out.append({
             "id": t.id,
+            "user_id": t.user_id,
             "info_hash": t.info_hash,
             "name": t.name,
             "correct_name": t.correct_name,
@@ -455,7 +464,10 @@ def get_all_torrents(session: Session = Depends(get_session)):
 
 
 @app.get("/torrents/by_info_hash/{info_hash}", response_model=TorrentOut)
-def get_torrent_by_info_hash(info_hash: str, session: Session = Depends(get_session)):
+def get_torrent_by_info_hash(
+        info_hash: str,
+        session: Session = Depends(get_session)
+):
     t = session.exec(
         select(Torrent).where(Torrent.info_hash == info_hash)
     ).first()

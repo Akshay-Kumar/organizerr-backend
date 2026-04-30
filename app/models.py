@@ -9,6 +9,7 @@ from datetime import datetime
 # ----------------------------
 class Torrent(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)  # ✅ ADD THIS
     info_hash: Optional[str] = None
     name: Optional[str] = None
     correct_name: Optional[str] = None
@@ -62,3 +63,20 @@ class User(SQLModel, table=True):
     is_active: bool = Field(default=True)
     is_admin: bool = Field(default=False)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+
+# ----------------------------
+# FileOperation model
+# ----------------------------
+class FileOperation(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    info_hash: str = Field(index=True)
+    operation: Optional[str] = None
+    source: Optional[str] = None
+    destination: Optional[str] = None
+    backup: Optional[str] = None
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    success: Optional[bool] = None
+    file_size: Optional[int] = None
+    file_hash: Optional[str] = None

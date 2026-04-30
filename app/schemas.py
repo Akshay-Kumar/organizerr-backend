@@ -1,6 +1,7 @@
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List, Dict
-
+from datetime import datetime
+from typing import List
 
 # ----------------------------
 # Torrent schemas
@@ -58,21 +59,45 @@ class TorrentOut(BaseModel):
     }
 
 
+# ----------------------------
+# FileOperation schemas
+# ----------------------------
+class FileOperationCreate(BaseModel):
+    operation: Optional[str] = None
+    source: Optional[str] = None
+    destination: Optional[str] = None
+    backup: Optional[str] = None
+    timestamp: datetime = None  # not required
+    success: Optional[bool] = None
+    file_size: Optional[int] = None
+    file_hash: Optional[str] = None
+    info_hash: str  # ✅ now REQUIRED
+
+
+class FileOperationUpdate(BaseModel):
+    source: Optional[str] = None
+    destination: Optional[str] = None
+    backup: Optional[str] = None
+    timestamp: datetime
+    success: Optional[bool] = None
+    file_size: Optional[int] = None
+    file_hash: Optional[str] = None
+
+
 class FileOperationOut(BaseModel):
     operation: Optional[str] = None
     source: Optional[str] = None
     destination: Optional[str] = None
     backup: Optional[str] = None
-    timestamp: Optional[str] = None
+    timestamp: datetime
     success: Optional[bool] = None
     file_size: Optional[int] = None
     file_hash: Optional[str] = None
-    info_hash: Optional[str] = None
+    info_hash: str  # ✅ now REQUIRED
 
-
-class FileOperationsResponse(BaseModel):
-    count: int
-    operations: Dict[str, FileOperationOut]
+    model_config = {
+        "from_attributes": True
+    }
 
 
 # ----------------------------

@@ -8,34 +8,62 @@ from app.qb_helper import list_torrents
 from app.crud import get_all_torrents
 from app.utils.db import engine
 from app.routers.auth import verify_token
-
+from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
+import logging
 router = APIRouter()
 
 
 class ConnectionManager:
     def __init__(self):
-        self.active: List[WebSocket] = []
+        self.active: List[tuple[WebSocket, dict]] = []
         self._lock = asyncio.Lock()
+        self.logger = logging.getLogger(__name__)
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket, user: dict):
+        user_id = user.get("user_id") if isinstance(user, dict) else user.id
+        self.logger.info(f"[WS] Connected user {user_id}, total: {len(self.active)}")
         await websocket.accept()
         async with self._lock:
-            self.active.append(websocket)
+            self.active.append((websocket, user))
 
     async def disconnect(self, websocket: WebSocket):
+        self.logger.info(f"[WS] Disconnected, total: {len(self.active)}")
         async with self._lock:
-            if websocket in self.active:
-                self.active.remove(websocket)
+            self.active = [(ws, u) for ws, u in self.active if ws != websocket]
 
     async def broadcast(self, message: dict):
         async with self._lock:
             conns = list(self.active)
 
         dead = []
-        for ws in conns:
+
+        for ws, user in conns:
             try:
-                await ws.send_json(message)
-            except Exception:
+                if ws.client_state.name != "CONNECTED":
+                    dead.append(ws)
+                    continue
+
+                if message["type"] == "torrents_snapshot":
+                    user_id = user.get("user_id")
+                    is_admin = user.get("is_admin", False)
+
+                    filtered = [
+                        t for t in message["torrents"]
+                        if t.get("user_id") == user_id or is_admin
+                    ]
+
+                    await ws.send_json({
+                        "type": "torrents_snapshot",
+                        "torrents": filtered
+                    })
+                else:
+                    await ws.send_json(message)
+
+            except (ConnectionClosedError, ConnectionClosedOK, RuntimeError):
+                dead.append(ws)
+
+            except Exception as e:
+                print("[WS ERROR - unexpected]", repr(e))
                 dead.append(ws)
 
         for ws in dead:
@@ -54,8 +82,9 @@ QB_TIMEOUT = 5              # prevents hanging inside qB calls
 MAX_BACKOFF = 60            # max backoff on qB errors
 DB_REFRESH_EVERY = 30       # cache DB list
 PING_INTERVAL = 15          # websocket keepalive
+FILE_OPS_INTERVAL = 15      # seconds
 # ---------------------------
-
+logger = logging.getLogger(__name__)
 _last_snapshot: Optional[list] = None
 _fail_count = 0
 
@@ -65,6 +94,8 @@ _stop_event = asyncio.Event()
 
 _cached_db_list = None
 _last_db_fetch = 0.0
+
+_last_file_ops_trigger = 0
 
 
 def _compute_backoff(fail_count: int) -> int:
@@ -77,7 +108,7 @@ async def _safe_list_torrents():
 
 
 async def torrent_broadcaster():
-    global _last_snapshot, _fail_count, _cached_db_list, _last_db_fetch
+    global _last_snapshot, _fail_count, _cached_db_list, _last_db_fetch, _last_file_ops_trigger
 
     next_run = time.monotonic()
 
@@ -115,8 +146,8 @@ async def torrent_broadcaster():
                 except Exception as e:
                     _fail_count += 1
                     backoff_time = _compute_backoff(_fail_count)
-                    print("[WARN] qBittorrent error:", repr(e))
-                    print(f"[BACKOFF] Sleeping {backoff_time}s...")
+                    logger.warning("[WARN] qBittorrent error:", repr(e))
+                    logger.info(f"[BACKOFF] Sleeping {backoff_time}s...")
                     next_run = time.monotonic() + backoff_time
                     continue
 
@@ -130,6 +161,7 @@ async def torrent_broadcaster():
                     if live:
                         snapshot.append({
                             "id": t.id,
+                            "user_id": t.user_id,
                             "hash": info_hash,
                             "name": t.correct_name or t.name,
                             "progress": int(live.progress * 100),
@@ -138,10 +170,12 @@ async def torrent_broadcaster():
                             "upspeed": live.upspeed,
                             "eta": live.eta,
                             "poster": t.poster,
+                            "last_update": time.time(),  # 🔥 NEW
                         })
                     else:
                         snapshot.append({
                             "id": t.id,
+                            "user_id": t.user_id,
                             "hash": info_hash,
                             "name": t.correct_name or t.name,
                             "progress": 0,
@@ -150,16 +184,37 @@ async def torrent_broadcaster():
                             "upspeed": 0,
                             "eta": None,
                             "poster": t.poster,
+                            "last_update": time.time(),  # 🔥 NEW
                         })
 
                 snapshot.sort(key=lambda x: x["id"], reverse=True)
 
-                if snapshot != _last_snapshot:
-                    await manager.broadcast({"type": "torrents_snapshot", "torrents": snapshot})
-                    _last_snapshot = snapshot
+                def normalize_snapshot(snap):
+                    return [
+                        {k: v for k, v in t.items() if k != "last_update"}
+                        for t in snap
+                    ]
+
+                normalized = normalize_snapshot(snapshot)
+
+                if normalized != (_last_snapshot or []):
+                    await manager.broadcast({
+                        "type": "torrents_snapshot",
+                        "torrents": snapshot
+                    })
+
+                    # throttle file ops refresh
+                    now_ts = time.time()
+                    if now_ts - _last_file_ops_trigger > FILE_OPS_INTERVAL:
+                        await manager.broadcast({
+                            "type": "file_ops_refresh"
+                        })
+                        _last_file_ops_trigger = now_ts
+
+                    _last_snapshot = normalized
 
             except Exception as e:
-                print("[ERROR] Broadcaster crashed:", repr(e))
+                logger.info("[ERROR] Broadcaster crashed:", repr(e))
 
 
 @router.on_event("startup")
@@ -189,7 +244,53 @@ async def ws_torrents(websocket: WebSocket, token: str):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
-    await manager.connect(websocket)
+    await manager.connect(websocket, user)
+    await websocket.send_json({
+        "type": "connected"
+    })
+
+    # send initial snapshot at start
+    try:
+        with Session(engine) as session:
+            db_list = get_all_torrents(session)
+
+        q_list = await _safe_list_torrents()
+        live_map = {getattr(t, "hash", "").lower(): t for t in q_list}
+
+        snapshot = []
+        user_id = user.get("user_id")
+        is_admin = user.get("is_admin", False)
+
+        for t in db_list:
+            if not (t.user_id == user_id or is_admin):
+                continue
+
+            info_hash = (t.info_hash or "").lower()
+            live = live_map.get(info_hash)
+
+            snapshot.append({
+                "id": t.id,
+                "user_id": t.user_id,
+                "hash": info_hash,
+                "name": t.correct_name or t.name,
+                "progress": int(live.progress * 100) if live else 0,
+                "state": live.state if live else "missing",
+                "dlspeed": live.dlspeed if live else 0,
+                "upspeed": live.upspeed if live else 0,
+                "eta": live.eta if live else None,
+                "poster": t.poster,
+                "last_update": time.time(),
+            })
+
+        snapshot.sort(key=lambda x: x["id"], reverse=True)
+
+        await websocket.send_json({
+            "type": "torrents_snapshot",
+            "torrents": snapshot
+        })
+
+    except Exception as e:
+        logger.warning("[WS INIT SNAPSHOT ERROR]", repr(e))
 
     try:
         while True:

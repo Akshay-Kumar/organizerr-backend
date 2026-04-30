@@ -13,69 +13,12 @@ import json
 import os
 import logging
 from pathlib import Path
-from app.schemas import TorrentUpdate, TorrentOut, FileOperationsResponse
+from app.schemas import TorrentUpdate, TorrentOut, FileOperationCreate, FileOperationUpdate, FileOperationOut
+from app.crud import upsert_file_operation, list_file_operations, get_file_operation_by_hash
+from app.utils.ws import manager
 
 logger = logging.getLogger(__name__)
-
-FILE_OPERATIONS_PATH = Path(
-    os.getenv(
-        "FILE_OPERATIONS_PATH",
-        r"C:\Users\akki0\PycharmProjects\media-organizer\file_operations.json"
-    )
-)
 router = APIRouter(prefix="/api", tags=["torrents"])
-
-# -----------------------------
-# File Operations / PATH
-# -----------------------------
-def load_file_operations():
-    if not FILE_OPERATIONS_PATH.exists():
-        logger.warning("file_operations.json not found at %s", FILE_OPERATIONS_PATH)
-        return []
-
-    try:
-        with open(FILE_OPERATIONS_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        if not isinstance(data, list):
-            logger.warning("file_operations.json is not a JSON array")
-            return []
-
-        return data
-    except Exception:
-        logger.exception("Failed to load file_operations.json")
-        return []
-
-
-def build_file_operations_index():
-    """
-    Return latest operation per info_hash, keyed by lowercase info_hash.
-    """
-    indexed = {}
-
-    for op in load_file_operations():
-        info_hash = str(op.get("info_hash") or "").strip().lower()
-        if not info_hash:
-            continue
-
-        existing = indexed.get(info_hash)
-        current_ts = str(op.get("timestamp") or "")
-        existing_ts = str(existing.get("timestamp") or "") if existing else ""
-
-        if not existing or current_ts > existing_ts:
-            indexed[info_hash] = {
-                "operation": op.get("operation"),
-                "source": op.get("source"),
-                "destination": op.get("destination"),
-                "backup": op.get("backup"),
-                "timestamp": op.get("timestamp"),
-                "success": op.get("success"),
-                "file_size": op.get("file_size"),
-                "file_hash": op.get("file_hash"),
-                "info_hash": op.get("info_hash"),
-            }
-
-    return indexed
 
 # -----------------------------
 # Auth / Current user dependency
@@ -184,13 +127,36 @@ def delete_torrent(
     session.commit()
     return {"ok": True}
 
-
-@router.get("/file-operations", response_model=FileOperationsResponse)
-def get_file_operations(
-    current_user: User = Depends(get_current_user),
+@router.post("/file-operations", response_model=FileOperationOut)
+def create_or_update_file_operation(
+    payload: FileOperationCreate,
+    session: Session = Depends(get_session),
 ):
-    operations = build_file_operations_index()
-    return {
-        "count": len(operations),
-        "operations": operations
-    }
+    data = payload.dict(exclude_unset=True)
+    response = upsert_file_operation(session, data)
+    manager.broadcast({
+        "type": "file_ops_update",
+        "info_hash": data.get("info_hash"),
+        "status": "completed"  # or whatever changed
+    })
+    return response
+
+
+@router.get("/file-operations", response_model=List[FileOperationOut])
+def get_file_operations(
+    session: Session = Depends(get_session),
+):
+    return list_file_operations(session)
+
+
+@router.get("/file-operations/{info_hash}", response_model=FileOperationOut)
+def get_file_operation(
+    info_hash: str,
+    session: Session = Depends(get_session),
+):
+    op = get_file_operation_by_hash(session, info_hash)
+
+    if not op:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    return op

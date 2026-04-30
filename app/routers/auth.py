@@ -60,7 +60,8 @@ def verify_token(token: str) -> Optional[dict]:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return {
             "user_id": payload.get("user_id"),
-            "username": payload.get("sub")
+            "username": payload.get("sub"),
+            "is_admin": payload.get("is_admin", False),
         }
     except jwt.PyJWTError:
         return None
@@ -121,7 +122,8 @@ def login(
     # Create JWT
     token = create_access_token({
         "sub": user.username,
-        "user_id": user.id
+        "user_id": user.id,
+        "is_admin": user.is_admin,
     })
 
     return {
