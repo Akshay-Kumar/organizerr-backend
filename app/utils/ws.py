@@ -3,6 +3,8 @@ import asyncio
 import time
 from typing import List, Optional
 from sqlmodel import Session
+import hashlib
+import json
 
 from app.qb_helper import list_torrents
 from app.crud import get_all_torrents
@@ -10,6 +12,7 @@ from app.utils.db import engine
 from app.routers.auth import verify_token
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 import logging
+from starlette.websockets import WebSocketState
 router = APIRouter()
 
 
@@ -39,11 +42,16 @@ class ConnectionManager:
 
         for ws, user in conns:
             try:
-                if ws.client_state.name != "CONNECTED":
+                if ws.client_state != WebSocketState.CONNECTED:
                     dead.append(ws)
                     continue
 
-                if message["type"] == "torrents_snapshot":
+                msg_type = message.get("type")
+
+                # -------------------------
+                # TORRENTS SNAPSHOT
+                # -------------------------
+                if msg_type == "torrents_snapshot":
                     user_id = user.get("user_id")
                     is_admin = user.get("is_admin", False)
 
@@ -56,6 +64,29 @@ class ConnectionManager:
                         "type": "torrents_snapshot",
                         "torrents": filtered
                     })
+
+                # -------------------------
+                # FILE OPS UPDATE (NEW)
+                # -------------------------
+                elif msg_type == "file_ops_update":
+                    op = message.get("file_operation", {})
+
+                    user_id = user.get("user_id")
+                    is_admin = user.get("is_admin", False)
+
+                    torrent_id = op.get("torrent_id")
+
+                    if is_admin:
+                        await ws.send_json(message)
+
+
+                    elif torrent_id:
+                        if op.get("user_id") == user_id:
+                            await ws.send_json(message)
+
+                # -------------------------
+                # DEFAULT (ping, etc.)
+                # -------------------------
                 else:
                     await ws.send_json(message)
 
@@ -63,11 +94,12 @@ class ConnectionManager:
                 dead.append(ws)
 
             except Exception as e:
-                print("[WS ERROR - unexpected]", repr(e))
+                self.logger.exception(f"[WS ERROR] {repr(e)}")
                 dead.append(ws)
 
-        for ws in dead:
-            await self.disconnect(ws)
+        if dead:
+            async with self._lock:
+                self.active = [(ws, u) for ws, u in self.active if ws not in dead]
 
     async def has_clients(self) -> bool:
         async with self._lock:
@@ -82,10 +114,9 @@ QB_TIMEOUT = 5              # prevents hanging inside qB calls
 MAX_BACKOFF = 60            # max backoff on qB errors
 DB_REFRESH_EVERY = 30       # cache DB list
 PING_INTERVAL = 15          # websocket keepalive
-FILE_OPS_INTERVAL = 15      # seconds
 # ---------------------------
 logger = logging.getLogger(__name__)
-_last_snapshot: Optional[list] = None
+_last_snapshot_hash: Optional[str] = None
 _fail_count = 0
 
 _poll_lock = asyncio.Lock()
@@ -94,8 +125,6 @@ _stop_event = asyncio.Event()
 
 _cached_db_list = None
 _last_db_fetch = 0.0
-
-_last_file_ops_trigger = 0
 
 
 def _compute_backoff(fail_count: int) -> int:
@@ -106,9 +135,29 @@ async def _safe_list_torrents():
     # list_torrents is likely sync; run in a thread + timeout
     return await asyncio.wait_for(asyncio.to_thread(list_torrents), timeout=QB_TIMEOUT)
 
+def hash_snapshot(data):
+    return hashlib.md5(
+        json.dumps(data, sort_keys=True, default=str).encode()
+    ).hexdigest()
+
+
+def normalize_snapshot(snap):
+    return sorted([
+        {
+            "id": t.get("id"),
+            "user_id": t.get("user_id"),
+            "hash": t.get("hash"),
+            "progress": t.get("progress"),
+            "state": t.get("state"),
+            "dlspeed": t.get("dlspeed"),
+            "upspeed": t.get("upspeed"),
+            "eta": t.get("eta"),
+        }
+        for t in snap
+    ], key=lambda x: x["id"] or 0)
 
 async def torrent_broadcaster():
-    global _last_snapshot, _fail_count, _cached_db_list, _last_db_fetch, _last_file_ops_trigger
+    global _last_snapshot_hash, _fail_count, _cached_db_list, _last_db_fetch
 
     next_run = time.monotonic()
 
@@ -121,7 +170,7 @@ async def torrent_broadcaster():
 
         # Don’t poll at all if nobody is connected
         if not await manager.has_clients():
-            _last_snapshot = None
+            _last_snapshot_hash = None
             next_run = time.monotonic() + POLL_INTERVAL  # or + 30
             continue
 
@@ -146,7 +195,7 @@ async def torrent_broadcaster():
                 except Exception as e:
                     _fail_count += 1
                     backoff_time = _compute_backoff(_fail_count)
-                    logger.warning("[WARN] qBittorrent error:", repr(e))
+                    logger.warning(f"[WARN] qBittorrent error: {repr(e)}")
                     logger.info(f"[BACKOFF] Sleeping {backoff_time}s...")
                     next_run = time.monotonic() + backoff_time
                     continue
@@ -188,33 +237,19 @@ async def torrent_broadcaster():
                         })
 
                 snapshot.sort(key=lambda x: x["id"], reverse=True)
-
-                def normalize_snapshot(snap):
-                    return [
-                        {k: v for k, v in t.items() if k != "last_update"}
-                        for t in snap
-                    ]
-
                 normalized = normalize_snapshot(snapshot)
+                new_hash = hash_snapshot(normalized)
 
-                if normalized != (_last_snapshot or []):
+                if new_hash != _last_snapshot_hash:
                     await manager.broadcast({
                         "type": "torrents_snapshot",
                         "torrents": snapshot
                     })
-
-                    # throttle file ops refresh
-                    now_ts = time.time()
-                    if now_ts - _last_file_ops_trigger > FILE_OPS_INTERVAL:
-                        await manager.broadcast({
-                            "type": "file_ops_refresh"
-                        })
-                        _last_file_ops_trigger = now_ts
-
-                    _last_snapshot = normalized
+                    _last_snapshot_hash = new_hash
 
             except Exception as e:
-                logger.info("[ERROR] Broadcaster crashed:", repr(e))
+                logger.exception(f"[ERROR] Broadcaster crashed")
+                await asyncio.sleep(2)  # prevent tight crash loop
 
 
 @router.on_event("startup")
@@ -284,17 +319,21 @@ async def ws_torrents(websocket: WebSocket, token: str):
 
         snapshot.sort(key=lambda x: x["id"], reverse=True)
 
-        await websocket.send_json({
-            "type": "torrents_snapshot",
-            "torrents": snapshot
-        })
+        if websocket.client_state == WebSocketState.CONNECTED:
+            await websocket.send_json({
+                "type": "torrents_snapshot",
+                "torrents": snapshot
+            })
 
     except Exception as e:
-        logger.warning("[WS INIT SNAPSHOT ERROR]", repr(e))
+        logger.warning(f"[WS INIT SNAPSHOT ERROR] {repr(e)}")
 
     try:
         while True:
             await asyncio.sleep(PING_INTERVAL)
+            if websocket.client_state != WebSocketState.CONNECTED:
+                break
+
             await websocket.send_json({"type": "ping"})
     except (WebSocketDisconnect, Exception):
         await manager.disconnect(websocket)

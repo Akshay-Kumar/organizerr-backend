@@ -3,7 +3,6 @@ from app.models import Torrent, FileOperation, User
 from typing import Optional
 from datetime import datetime
 
-
 def create_torrent(
         session: Session,
         current_user: User,
@@ -118,20 +117,39 @@ def set_qb_error(session: Session, torrent_id: int, error: str):
 
 
 def upsert_file_operation(session: Session, data: dict) -> FileOperation:
-    # ✅ ensure timestamp always exists
     if not data.get("timestamp"):
         data["timestamp"] = datetime.utcnow()
 
-    existing = session.exec(
-        select(FileOperation).where(FileOperation.info_hash == data["info_hash"])
-    ).first()
+    # ✅ ALWAYS resolve torrent_id
+    if data.get("info_hash"):
+        torrent = find_by_info_hash(session, data["info_hash"])
+        if torrent:
+            data["torrent_id"] = torrent.id
+
+    file_hash = data.get("file_hash")
+    if file_hash:
+        existing = get_file_operation_by_info_and_file_hash(
+            session,
+            data["info_hash"],
+            file_hash
+        )
+    else:
+        existing = None
 
     if existing:
         for k, v in data.items():
             if hasattr(existing, k) and v is not None:
-                setattr(existing, k, v)
+                if k == "progress" and existing.progress is not None:
+                    existing.progress = max(existing.progress, v)
+                else:
+                    setattr(existing, k, v)
 
-        existing.timestamp = data["timestamp"]  # ✅ use provided or fallback
+                if k == "status" and existing.status:
+                    priority = {"processing": 1, "completed": 2, "failed": 3}
+                    if priority.get(v, 0) >= priority.get(existing.status, 0):
+                        existing.status = v
+
+        existing.updated_at = datetime.utcnow()
         session.add(existing)
         session.commit()
         session.refresh(existing)
@@ -144,13 +162,26 @@ def upsert_file_operation(session: Session, data: dict) -> FileOperation:
     return obj
 
 
-def get_file_operation_by_hash(session: Session, info_hash: str):
+def get_file_operations_by_hash(session: Session, info_hash: str):
     return session.exec(
-        select(FileOperation).where(FileOperation.info_hash == info_hash)
+        select(FileOperation).where(
+            FileOperation.info_hash == info_hash).order_by(desc(FileOperation.timestamp))
+    ).all()
+
+def get_file_operation_by_info_and_file_hash(
+    session: Session,
+    info_hash: str,
+    file_hash: str
+):
+    return session.exec(
+        select(FileOperation).where(
+            (FileOperation.info_hash == info_hash) &
+            (FileOperation.file_hash == file_hash)
+        )
     ).first()
 
-
-def list_file_operations(session: Session):
+def list_file_operations(session):
     return session.exec(
-        select(FileOperation).order_by(desc(FileOperation.timestamp))
+        select(FileOperation)
+        .order_by(desc(FileOperation.timestamp))
     ).all()

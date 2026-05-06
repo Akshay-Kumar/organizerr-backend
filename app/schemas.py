@@ -17,8 +17,8 @@ class TorrentCreate(BaseModel):
     year: Optional[int] = None
     poster: Optional[str] = None
     tmdb_id: Optional[int] = None
-    tags: Optional[List[str]] = []
-    custom_metadata: Optional[Dict] = {}
+    tags: Optional[List[str]] = None
+    custom_metadata: Optional[Dict] = None
 
 
 class TorrentUpdate(BaseModel):
@@ -63,37 +63,48 @@ class TorrentOut(BaseModel):
 # FileOperation schemas
 # ----------------------------
 class FileOperationCreate(BaseModel):
+    torrent_id: Optional[int] = None
     operation: Optional[str] = None
     source: Optional[str] = None
     destination: Optional[str] = None
     backup: Optional[str] = None
-    timestamp: datetime = None  # not required
+    timestamp: Optional[datetime] = None
     success: Optional[bool] = None
     file_size: Optional[int] = None
     file_hash: Optional[str] = None
     info_hash: str  # ✅ now REQUIRED
+    stage: Optional[str] = None
+    progress: Optional[float] = None
+    status: Optional[str] = None
+    updated_at: Optional[datetime] = None
 
 
 class FileOperationUpdate(BaseModel):
     source: Optional[str] = None
     destination: Optional[str] = None
     backup: Optional[str] = None
-    timestamp: datetime
+    timestamp: Optional[datetime] = None
     success: Optional[bool] = None
     file_size: Optional[int] = None
     file_hash: Optional[str] = None
+    updated_at: Optional[datetime] = None
 
 
 class FileOperationOut(BaseModel):
+    torrent_id: Optional[int] = None
     operation: Optional[str] = None
     source: Optional[str] = None
     destination: Optional[str] = None
     backup: Optional[str] = None
-    timestamp: datetime
+    timestamp: Optional[datetime] = None
     success: Optional[bool] = None
     file_size: Optional[int] = None
     file_hash: Optional[str] = None
     info_hash: str  # ✅ now REQUIRED
+    stage: Optional[str] = None
+    progress: Optional[float] = None
+    status: Optional[str] = None
+    updated_at: Optional[datetime] = None
 
     model_config = {
         "from_attributes": True

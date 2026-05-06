@@ -8,13 +8,13 @@ from app.schemas import TorrentUpdate, TorrentOut
 from app.utils.db import get_session
 from app.routers.auth import verify_token
 from app.qb_helper import get_qb  # qBittorrent helper
-from app.crud import get_torrent
+from app.crud import get_torrent, get_file_operation_by_info_and_file_hash
 import json
 import os
 import logging
 from pathlib import Path
 from app.schemas import TorrentUpdate, TorrentOut, FileOperationCreate, FileOperationUpdate, FileOperationOut
-from app.crud import upsert_file_operation, list_file_operations, get_file_operation_by_hash
+from app.crud import upsert_file_operation, list_file_operations, get_file_operations_by_hash
 from app.utils.ws import manager
 
 logger = logging.getLogger(__name__)
@@ -128,33 +128,65 @@ def delete_torrent(
     return {"ok": True}
 
 @router.post("/file-operations", response_model=FileOperationOut)
-def create_or_update_file_operation(
+async def create_or_update_file_operation(
     payload: FileOperationCreate,
     session: Session = Depends(get_session),
 ):
     data = payload.dict(exclude_unset=True)
+
+    if not data.get("info_hash"):
+        raise HTTPException(status_code=400, detail="info_hash is required")
+
+    if not data.get("file_hash"):
+        raise HTTPException(status_code=400, detail="file_hash is required")
+
+    data["info_hash"] = data["info_hash"].strip().lower()
+    data["file_hash"] = data["file_hash"].strip().lower()
+
     response = upsert_file_operation(session, data)
-    manager.broadcast({
+    logger.debug(f"File operation received: {data.get('info_hash')} -> {data.get('destination')}")
+
+    op = response.dict()
+
+    # 🔥 ENSURE torrent_id exists
+    if not data.get("torrent_id"):
+        logger.warning("Missing torrent_id in file operation")
+
+    await manager.broadcast({
         "type": "file_ops_update",
-        "info_hash": data.get("info_hash"),
-        "status": "completed"  # or whatever changed
+        "file_operation": {
+            **op,
+            "filename": (op.get("source") or "").split("/")[-1]
+        }
     })
+
+    # 🔥 SEND SNAPSHOT (OPTIONAL BUT POWERFUL)
+    ops = list_file_operations(session)
+
+    await manager.broadcast({
+        "type": "file_ops_snapshot",
+        "file_operations": [op.dict() for op in ops]
+    })
+
+    if data.get("status") == "failed":
+        logger.warning(f"File operation failed: {data}")
+
     return response
 
 
 @router.get("/file-operations", response_model=List[FileOperationOut])
-def get_file_operations(
+def get_all_operations(
     session: Session = Depends(get_session),
 ):
     return list_file_operations(session)
 
 
-@router.get("/file-operations/{info_hash}", response_model=FileOperationOut)
-def get_file_operation(
+@router.get("/file-operations/{info_hash}", response_model=List[FileOperationOut])
+def get_operations_by_hash(
     info_hash: str,
     session: Session = Depends(get_session),
 ):
-    op = get_file_operation_by_hash(session, info_hash)
+    op = get_file_operations_by_hash(session, info_hash)
 
     if not op:
         raise HTTPException(status_code=404, detail="Not found")
