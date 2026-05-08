@@ -34,7 +34,6 @@ def get_current_user(
         raise HTTPException(status_code=401, detail="User not found")
     return user
 
-
 @router.patch("/torrents/{id}", response_model=TorrentOut)
 def update_torrent(
     id: int,
@@ -59,6 +58,18 @@ def update_torrent(
     session.refresh(t)
     return t
 
+@router.get("/torrents/{id}", response_model=TorrentOut)
+def get_single_torrent(
+    id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    torrent = get_torrent(session, id)
+
+    if not torrent:
+        raise HTTPException(status_code=404, detail="Torrent not found")
+
+    return torrent
 
 # -----------------------------
 # Stop / Resume / Delete

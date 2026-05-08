@@ -37,19 +37,41 @@ def find_by_info_hash(session: Session, info_hash: str) -> Optional[Torrent]:
     res = session.exec(statement).first()
     return res
 
-
-def list_torrents(session: Session, current_user: User, limit: int = 100):
+def list_torrents(
+            session: Session,
+            current_user: User,
+            page: int = 1,
+            page_size: int = 25
+    ):
     if not current_user.is_active:
-        return []  # or raise error
+        return [], 0
 
     if current_user.is_admin:
         statement = select(Torrent)
+        count_statement = select(Torrent)
     else:
-        statement = select(Torrent).where(Torrent.user_id == current_user.id)
+        statement = select(Torrent).where(
+            Torrent.user_id == current_user.id
+        )
 
-    statement = statement.order_by(desc(Torrent.created_at)).limit(limit)
+        count_statement = select(Torrent).where(
+            Torrent.user_id == current_user.id
+        )
 
-    return session.exec(statement).all()
+    total = len(session.exec(count_statement).all())
+
+    offset = (page - 1) * page_size
+
+    statement = (
+        statement
+        .order_by(desc(Torrent.created_at))
+        .offset(offset)
+        .limit(page_size)
+    )
+
+    items = session.exec(statement).all()
+
+    return items, total
 
 
 def get_all_torrents(session: Session):

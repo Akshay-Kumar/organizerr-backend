@@ -13,6 +13,7 @@ from app.routers.auth import verify_token
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 import logging
 from starlette.websockets import WebSocketState
+from app.utils.torrent_helpers import build_display_name
 router = APIRouter()
 
 
@@ -213,6 +214,7 @@ async def torrent_broadcaster():
                             "user_id": t.user_id,
                             "hash": info_hash,
                             "name": t.correct_name or t.name,
+                            "display_name": build_display_name(t),
                             "progress": int(live.progress * 100),
                             "state": live.state,
                             "dlspeed": live.dlspeed,
@@ -227,6 +229,7 @@ async def torrent_broadcaster():
                             "user_id": t.user_id,
                             "hash": info_hash,
                             "name": t.correct_name or t.name,
+                            "display_name": build_display_name(t),
                             "progress": 0,
                             "state": "missing",
                             "dlspeed": 0,
@@ -308,6 +311,7 @@ async def ws_torrents(websocket: WebSocket, token: str):
                 "user_id": t.user_id,
                 "hash": info_hash,
                 "name": t.correct_name or t.name,
+                "display_name": build_display_name(t),
                 "progress": int(live.progress * 100) if live else 0,
                 "state": live.state if live else "missing",
                 "dlspeed": live.dlspeed if live else 0,

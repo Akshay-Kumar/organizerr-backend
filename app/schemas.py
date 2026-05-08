@@ -40,6 +40,7 @@ class TorrentOut(BaseModel):
     info_hash: Optional[str]
     name: Optional[str]
     correct_name: Optional[str]
+    display_name: Optional[str] = None
     source: Optional[str]
     save_path: Optional[str]
     media_type: Optional[str]

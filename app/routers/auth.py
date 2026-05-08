@@ -5,6 +5,7 @@ from typing import Optional
 import jwt
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordBearer
 from passlib.context import CryptContext
 from sqlmodel import Session, select
 
@@ -13,6 +14,7 @@ from app.schemas import TokenOut, UserCreateIn, UserOut
 from app.utils.db import get_session
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 SECRET_KEY = os.getenv("JWT_SECRET", "super-secret-change-me")
 ALGORITHM = "HS256"
@@ -55,14 +57,23 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
-def verify_token(token: str) -> Optional[dict]:
+def verify_token(
+    token: str = Depends(oauth2_scheme)
+) -> Optional[dict]:
+
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(
+            token,
+            SECRET_KEY,
+            algorithms=[ALGORITHM]
+        )
+
         return {
             "user_id": payload.get("user_id"),
             "username": payload.get("sub"),
             "is_admin": payload.get("is_admin", False),
         }
+
     except jwt.PyJWTError:
         return None
 

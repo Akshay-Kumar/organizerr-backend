@@ -21,10 +21,11 @@ from app.models import Torrent, User  # <- make sure this points to your SQLMode
 from app.qb_helper import add_torrent, set_torrent_tags
 from app.routers import search_media, auth, torrents
 from app.utils.deps import get_current_user
-from app.schemas import TorrentUpdate, TorrentOut
+from app.schemas import TorrentUpdate, TorrentOut, UserOut
 from app.utils import ws
 from app.utils.db import engine, get_session
 from app.utils.torrent_utils import get_info_hash_from_file, parse_magnet
+from app.utils.torrent_helpers import build_display_name
 
 # Load environment variables
 load_dotenv()
@@ -201,6 +202,7 @@ async def add_torrent_endpoint(
         "info_hash": rec.info_hash,
         "name": rec.name,
         "correct_name": rec.correct_name,
+        "display_name": build_display_name(rec),
         "source": rec.source,
         "save_path": rec.save_path,
         "media_type": rec.media_type,
@@ -396,6 +398,7 @@ async def add_torrents_batch(
                 "info_hash": rec.info_hash,
                 "name": rec.name,
                 "correct_name": rec.correct_name,
+                "display_name": build_display_name(rec),
                 "source": rec.source,
                 "save_path": rec.save_path,
                 "media_type": rec.media_type,
@@ -432,13 +435,22 @@ async def add_torrents_batch(
 # --------------------------
 # Get all torrents
 # --------------------------
-@app.get("/torrents", response_model=list[TorrentOut])
+@app.get("/torrents")
 def get_all_torrents(
-        session: Session = Depends(get_session),
-        current_user: User = Depends(get_current_user),
+    page: int = 1,
+    page_size: int = 25,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
-    items = list_torrents(session, current_user)
+    items, total = list_torrents(
+        session,
+        current_user,
+        page=page,
+        page_size=page_size
+    )
+
     out = []
+
     for t in items:
         out.append({
             "id": t.id,
@@ -446,6 +458,7 @@ def get_all_torrents(
             "info_hash": t.info_hash,
             "name": t.name,
             "correct_name": t.correct_name,
+            "display_name": build_display_name(t),
             "source": t.source,
             "save_path": t.save_path,
             "media_type": t.media_type,
@@ -460,7 +473,14 @@ def get_all_torrents(
             "qb_added": t.qb_added,
             "qb_error": t.qb_error
         })
-    return out
+
+    return {
+        "items": out,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": max(1, (total + page_size - 1) // page_size)
+    }
 
 
 @app.get("/torrents/by_info_hash/{info_hash}", response_model=TorrentOut)
@@ -480,6 +500,7 @@ def get_torrent_by_info_hash(
         "info_hash": t.info_hash,
         "name": t.name,
         "correct_name": t.correct_name,
+        "display_name": build_display_name(t),
         "source": t.source,
         "save_path": t.save_path,
         "media_type": t.media_type,
@@ -519,6 +540,7 @@ def patch_torrent(torrent_id: int, payload: TorrentUpdate, session: Session = De
         "info_hash": updated.info_hash,
         "name": updated.name,
         "correct_name": updated.correct_name,
+        "display_name": build_display_name(updated),
         "source": updated.source,
         "save_path": updated.save_path,
         "media_type": updated.media_type,
@@ -533,3 +555,9 @@ def patch_torrent(torrent_id: int, payload: TorrentUpdate, session: Session = De
         "qb_added": updated.qb_added,
         "qb_error": updated.qb_error
     }
+
+@app.get("/me", response_model=UserOut)
+def get_me(
+    current_user: User = Depends(get_current_user)
+):
+    return current_user
