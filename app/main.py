@@ -1,12 +1,11 @@
-import logging
 import json
-import logging
 import os
 import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 from uuid import uuid4
+
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi import UploadFile, File, Form, BackgroundTasks, HTTPException, Depends
@@ -20,15 +19,19 @@ from app.crud import create_torrent, get_torrent, list_torrents, update_torrent,
 from app.models import Torrent, User  # <- make sure this points to your SQLModel Torrent class
 from app.qb_helper import add_torrent, set_torrent_tags
 from app.routers import search_media, auth, torrents
-from app.utils.deps import get_current_user
 from app.schemas import TorrentUpdate, TorrentOut, UserOut
 from app.utils import ws
 from app.utils.db import engine, get_session
-from app.utils.torrent_utils import get_info_hash_from_file, parse_magnet
+from app.utils.deps import get_current_user
+from app.utils.logger import setup_logging
+from app.utils.logger import get_logger
 from app.utils.torrent_helpers import build_display_name
+from app.utils.torrent_utils import get_info_hash_from_file, parse_magnet
+from app.routers.health import router as health_router
 
 # Load environment variables
 load_dotenv()
+setup_logging()
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "./uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_MEDIA_TYPES = {"movie", "tv", "episode", "music", "unsorted"}
@@ -47,10 +50,10 @@ app.include_router(search_media.router)
 app.include_router(ws.router)
 app.include_router(auth.router)
 app.include_router(torrents.router)
+app.include_router(health_router)
 
 # Logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # Middleware to log all requests
@@ -81,12 +84,12 @@ def on_startup():
         if "correct_name" not in columns:
             conn.execute(text("ALTER TABLE torrent ADD COLUMN correct_name TEXT"))
             conn.commit()
-            print("Column 'correct_name' added successfully.")
+            logger.info("Column 'correct_name' added successfully.")
 
         if False:
             conn.execute(text("DELETE FROM torrent"))
             conn.commit()
-            print("All torrent records deleted.")
+            logger.info("All torrent records deleted.")
 
 
 # --------------------------

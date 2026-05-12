@@ -3,6 +3,7 @@ run_organizerr_backend.bat
 torrents.db
 uploads
 .idea
+logs
 # Python cache
 __pycache__/
 *.pyc

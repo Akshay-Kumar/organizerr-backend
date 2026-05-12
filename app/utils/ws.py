@@ -14,6 +14,7 @@ from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 import logging
 from starlette.websockets import WebSocketState
 from app.utils.torrent_helpers import build_display_name
+from app.utils.logger import get_logger
 router = APIRouter()
 
 
@@ -21,7 +22,7 @@ class ConnectionManager:
     def __init__(self):
         self.active: List[tuple[WebSocket, dict]] = []
         self._lock = asyncio.Lock()
-        self.logger = logging.getLogger(__name__)
+        self.logger = get_logger(__name__)
 
     async def connect(self, websocket: WebSocket, user: dict):
         user_id = user.get("user_id") if isinstance(user, dict) else user.id
@@ -116,7 +117,7 @@ MAX_BACKOFF = 60            # max backoff on qB errors
 DB_REFRESH_EVERY = 30       # cache DB list
 PING_INTERVAL = 15          # websocket keepalive
 # ---------------------------
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 _last_snapshot_hash: Optional[str] = None
 _fail_count = 0
 

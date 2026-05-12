@@ -3,7 +3,9 @@ import hashlib
 from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qs, urlparse, unquote
+from app.utils.logger import get_logger
 
+logger = get_logger(__name__)
 
 def get_info_hash_from_file(torrent_path: str) -> Optional[str]:
     """
@@ -15,7 +17,7 @@ def get_info_hash_from_file(torrent_path: str) -> Optional[str]:
         bencoded_info = bencodepy.encode(info)
         return hashlib.sha1(bencoded_info).hexdigest().lower()
     except Exception as e:
-        print(f"Failed to extract info-hash: {e}")
+        logger.info(f"Failed to extract info-hash: {e}")
         return None
 
 

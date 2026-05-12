@@ -2,6 +2,23 @@ from sqlmodel import Session, select, desc
 from app.models import Torrent, FileOperation, User
 from typing import Optional
 from datetime import datetime
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+# file-operation stage priorities
+STAGE_PRIORITY = {
+    "media_info": 1,
+    "metadata": 2,
+    "copy": 3,
+    "artwork": 4,
+    "subtitles": 5,
+    "validation": 6,
+    "plex": 7,
+    "emby": 8,
+    "library_scan": 9,
+    "completed": 999,
+}
 
 def create_torrent(
         session: Session,
@@ -159,17 +176,35 @@ def upsert_file_operation(session: Session, data: dict) -> FileOperation:
         existing = None
 
     if existing:
-        for k, v in data.items():
-            if hasattr(existing, k) and v is not None:
-                if k == "progress" and existing.progress is not None:
-                    existing.progress = max(existing.progress, v)
-                else:
-                    setattr(existing, k, v)
+        incoming_stage = data.get("stage")
+        stage_changed = (
+                incoming_stage
+                and incoming_stage != existing.stage
+        )
 
-                if k == "status" and existing.status:
-                    priority = {"processing": 1, "completed": 2, "failed": 3}
-                    if priority.get(v, 0) >= priority.get(existing.status, 0):
-                        existing.status = v
+        for k, v in data.items():
+            if not hasattr(existing, k):
+                continue
+
+            if v is None:
+                continue
+
+            # -----------------------------------
+            # Stage changed
+            # -----------------------------------
+            if stage_changed:
+                setattr(existing, k, v)
+                continue
+
+            # -----------------------------------
+            # Same stage logic
+            # -----------------------------------
+            if k == "progress":
+                existing.progress = v
+            elif k == "status":
+                existing.status = v
+            else:
+                setattr(existing, k, v)
 
         existing.updated_at = datetime.utcnow()
         session.add(existing)

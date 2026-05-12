@@ -1,4 +1,6 @@
 # app/api/torrents.py
+from datetime import datetime
+
 from fastapi import APIRouter, HTTPException, Depends
 from sqlmodel import Session
 from typing import List
@@ -16,8 +18,10 @@ from pathlib import Path
 from app.schemas import TorrentUpdate, TorrentOut, FileOperationCreate, FileOperationUpdate, FileOperationOut
 from app.crud import upsert_file_operation, list_file_operations, get_file_operations_by_hash
 from app.utils.ws import manager
+from app.utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+
+logger = get_logger(__name__)
 router = APIRouter(prefix="/api", tags=["torrents"])
 
 # -----------------------------
@@ -33,6 +37,19 @@ def get_current_user(
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
     return user
+
+
+# -----------------------------
+# Datetime normalization
+# -----------------------------
+def serialize_datetimes(data: dict):
+    result = {}
+    for k, v in data.items():
+        if isinstance(v, datetime):
+            result[k] = v.isoformat()
+        else:
+            result[k] = v
+    return result
 
 @router.patch("/torrents/{id}", response_model=TorrentOut)
 def update_torrent(
@@ -163,21 +180,30 @@ async def create_or_update_file_operation(
     if not data.get("torrent_id"):
         logger.warning("Missing torrent_id in file operation")
 
+    serialized_op = {}
+    serialized_op = serialize_datetimes(op)
+    serialized_op["filename"] = (
+            serialized_op.get("source") or ""
+    ).split("\\")[-1]
+
+    serialized_op["updated_at"] = (
+        datetime.utcnow().isoformat()
+    )
+
     await manager.broadcast({
         "type": "file_ops_update",
-        "file_operation": {
-            **op,
-            "filename": (op.get("source") or "").split("/")[-1]
-        }
+        "file_operation": serialized_op
     })
 
     # 🔥 SEND SNAPSHOT (OPTIONAL BUT POWERFUL)
+    '''
     ops = list_file_operations(session)
 
     await manager.broadcast({
         "type": "file_ops_snapshot",
         "file_operations": [op.dict() for op in ops]
     })
+    '''
 
     if data.get("status") == "failed":
         logger.warning(f"File operation failed: {data}")
