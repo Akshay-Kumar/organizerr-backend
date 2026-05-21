@@ -14,8 +14,9 @@ QBT_USER = os.getenv("QBT_USER", "admin")
 QBT_PASS = os.getenv("QBT_PASS", "adminadmin")
 
 # Network safety defaults
-QBT_TIMEOUT = float(os.getenv("QBT_TIMEOUT", "5"))          # seconds
-QBT_VERIFY_SSL = os.getenv("QBT_VERIFY_SSL", "true").lower() == "true"
+QBT_TIMEOUT = float(os.getenv("QBT_TIMEOUT", "5")) # seconds
+# QBT_VERIFY_SSL = os.getenv("QBT_VERIFY_SSL", "true").lower() == "true"
+QBT_VERIFY_SSL = False
 
 # Singleton client + lock
 _qb_client: Optional[Client] = None
@@ -32,7 +33,9 @@ def _build_client() -> Client:
         username=QBT_USER,
         password=QBT_PASS,
         VERIFY_WEBUI_CERTIFICATE=QBT_VERIFY_SSL,
-        REQUESTS_ARGS={"timeout": QBT_TIMEOUT},
+        REQUESTS_ARGS={
+            "timeout": (QBT_TIMEOUT, 30)
+        },
     )
     return qb
 
@@ -61,8 +64,8 @@ def get_qb_client(force_relogin: bool = False) -> Client:
         try:
             if not _qb_client.is_logged_in:
                 _qb_client.auth_log_in()
-        except (LoginFailed, APIConnectionError):
-            # Rebuild client on hard failures
+        except Exception as e:
+            print(f"[QBIT LOGIN ERROR] {type(e).__name__}: {e}")
             _qb_client = _build_client()
             _qb_client.auth_log_in()
 
