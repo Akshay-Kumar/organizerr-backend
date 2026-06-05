@@ -90,5 +90,65 @@ class FileOperation(SQLModel, table=True):
     success: Optional[bool] = None
     file_size: Optional[int] = None
     stage: Optional[str] = None
-    progress: Optional[float] = None  # 0 → 100
-    status: Optional[str] = None  # processing | completed | failed
+
+    # current stage progress
+    progress: Optional[float] = None  # 0 -> 100
+
+    # initialized | processing | completed | failed
+    status: Optional[str] = None
+
+    # timing
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    duration_seconds: Optional[float] = None
+
+    # live transfer metrics
+    speed: Optional[float] = None
+    eta: Optional[int] = None
+
+    # optional extra details
+    details: Optional[str] = None
+
+
+
+# ----------------------------
+# ProcessingReport model
+# ----------------------------
+class ProcessingReport(SQLModel, table=True):
+    id: Optional[int] = Field(
+        default=None,
+        primary_key=True
+    )
+
+    torrent_id: Optional[int] = Field(
+        default=None,
+        foreign_key="torrent.id",
+        index=True
+    )
+
+    info_hash: Optional[str] = Field(
+        default=None,
+        index=True
+    )
+
+    file_hash: Optional[str] = Field(
+        default=None,
+        index=True
+    )
+
+    media_type: Optional[str] = None
+
+    source_path: Optional[str] = None
+
+    destination_path: Optional[str] = None
+
+    success: bool = False
+
+    processing_time: Optional[float] = None
+
+    created_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        index=True
+    )
+
+    report_json: str

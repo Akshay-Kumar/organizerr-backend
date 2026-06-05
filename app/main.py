@@ -15,10 +15,23 @@ from sqlalchemy import text
 from sqlmodel import SQLModel, Session
 from sqlmodel import select
 
-from app.crud import create_torrent, get_torrent, list_torrents, update_torrent, set_qb_error
-from app.models import Torrent, User  # <- make sure this points to your SQLModel Torrent class
+from app.crud import (
+    create_torrent,
+    get_torrent,
+    list_torrents,
+    update_torrent,
+    set_qb_error,
+    get_file_operations_by_hash
+)
+from app.models import (
+    Torrent,
+    User,
+    FileOperation,
+    ProcessingReport
+)
 from app.qb_helper import add_torrent, set_torrent_tags
 from app.routers import search_media, auth, torrents
+from app.routers.torrents import serialize_datetimes
 from app.schemas import TorrentUpdate, TorrentOut, UserOut
 from app.utils import ws
 from app.utils.db import engine, get_session
@@ -455,6 +468,10 @@ def get_all_torrents(
     out = []
 
     for t in items:
+        ops = get_file_operations_by_hash(
+            session,
+            t.info_hash or ""
+        )
         out.append({
             "id": t.id,
             "user_id": t.user_id,
@@ -474,7 +491,11 @@ def get_all_torrents(
             "tags": t.tags_list(),
             "custom_metadata": t.get_custom_metadata(),
             "qb_added": t.qb_added,
-            "qb_error": t.qb_error
+            "qb_error": t.qb_error,
+            "fileOperations": [
+                serialize_datetimes(op.dict())
+                for op in ops
+            ],
         })
 
     return {

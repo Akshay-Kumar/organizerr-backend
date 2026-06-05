@@ -1,13 +1,19 @@
 from sqlmodel import Session, select, desc
-from app.models import Torrent, FileOperation, User
+from app.models import (
+    Torrent,
+    FileOperation,
+    ProcessingReport,
+    User
+)
 from typing import Optional
 from datetime import datetime
+import json
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# file-operation stage priorities
-STAGE_PRIORITY = {
+# file-operation stage order
+STAGE_ORDER = {
     "media_info": 1,
     "metadata": 2,
     "copy": 3,
@@ -17,7 +23,6 @@ STAGE_PRIORITY = {
     "plex": 7,
     "emby": 8,
     "library_scan": 9,
-    "completed": 999,
 }
 
 def create_torrent(
@@ -155,33 +160,83 @@ def set_qb_error(session: Session, torrent_id: int, error: str):
     return t
 
 
-def upsert_file_operation(session: Session, data: dict) -> FileOperation:
+def upsert_file_operation(
+    session: Session,
+    data: dict
+) -> FileOperation:
+
     if not data.get("timestamp"):
         data["timestamp"] = datetime.utcnow()
 
-    # ✅ ALWAYS resolve torrent_id
+    # resolve torrent_id
     if data.get("info_hash"):
-        torrent = find_by_info_hash(session, data["info_hash"])
+        torrent = find_by_info_hash(
+            session,
+            data["info_hash"]
+        )
+
         if torrent:
             data["torrent_id"] = torrent.id
+            data["user_id"] = torrent.user_id
 
     file_hash = data.get("file_hash")
-    if file_hash:
-        existing = get_file_operation_by_info_and_file_hash(
+    stage = data.get("stage")
+
+    logger.info(
+        f"UPSERT: "
+        f"file_hash={file_hash}, "
+        f"stage={stage}, "
+        f"status={data.get('status')}"
+    )
+
+    if stage and not data.get("operation"):
+        data["operation"] = stage
+
+    existing = None
+
+    if file_hash and stage:
+        existing = get_file_operation_by_stage(
             session,
             data["info_hash"],
-            file_hash
+            file_hash,
+            stage
         )
-    else:
-        existing = None
+
+    # -----------------------------------
+    # UPDATE EXISTING STAGE ROW
+    # -----------------------------------
 
     if existing:
-        incoming_stage = data.get("stage")
-        stage_changed = (
-                incoming_stage
-                and incoming_stage != existing.stage
-        )
+        incoming_status = data.get("status")
 
+        # -----------------------------------
+        # Stage start
+        # -----------------------------------
+        if incoming_status == "processing":
+            if not existing.started_at:
+                existing.started_at = datetime.utcnow()
+
+            existing.completed_at = None
+            existing.duration_seconds = None
+
+        # -----------------------------------
+        # Stage completed / failed
+        # -----------------------------------
+        if incoming_status in ["completed", "failed"]:
+            existing.completed_at = datetime.utcnow()
+
+            if existing.started_at:
+                existing.duration_seconds = round(
+                    (
+                            existing.completed_at
+                            - existing.started_at
+                    ).total_seconds(),
+                    2
+                )
+
+        # -----------------------------------
+        # Update live state
+        # -----------------------------------
         for k, v in data.items():
             if not hasattr(existing, k):
                 continue
@@ -189,22 +244,12 @@ def upsert_file_operation(session: Session, data: dict) -> FileOperation:
             if v is None:
                 continue
 
-            # -----------------------------------
-            # Stage changed
-            # -----------------------------------
-            if stage_changed:
-                setattr(existing, k, v)
-                continue
-
-            # -----------------------------------
-            # Same stage logic
-            # -----------------------------------
+            # prevent progress regression
             if k == "progress":
                 existing.progress = v
-            elif k == "status":
-                existing.status = v
-            else:
-                setattr(existing, k, v)
+                continue
+
+            setattr(existing, k, v)
 
         existing.updated_at = datetime.utcnow()
         session.add(existing)
@@ -212,33 +257,108 @@ def upsert_file_operation(session: Session, data: dict) -> FileOperation:
         session.refresh(existing)
         return existing
 
+    # -----------------------------------
+    # CREATE NEW STAGE ROW
+    # -----------------------------------
+    # initialize stage timing
+    if data.get("status") == "processing":
+        data["started_at"] = datetime.utcnow()
     obj = FileOperation(**data)
     session.add(obj)
     session.commit()
     session.refresh(obj)
+
     return obj
 
 
 def get_file_operations_by_hash(session: Session, info_hash: str):
     return session.exec(
         select(FileOperation).where(
-            FileOperation.info_hash == info_hash).order_by(desc(FileOperation.timestamp))
+            FileOperation.info_hash == info_hash).order_by(
+                FileOperation.file_hash,
+                FileOperation.timestamp
+            )
     ).all()
 
-def get_file_operation_by_info_and_file_hash(
+def get_file_operation_by_stage(
     session: Session,
     info_hash: str,
-    file_hash: str
+    file_hash: str,
+    stage: str
 ):
     return session.exec(
         select(FileOperation).where(
             (FileOperation.info_hash == info_hash) &
-            (FileOperation.file_hash == file_hash)
+            (FileOperation.file_hash == file_hash) &
+            (FileOperation.stage == stage)
         )
     ).first()
 
 def list_file_operations(session):
     return session.exec(
         select(FileOperation)
-        .order_by(desc(FileOperation.timestamp))
+        .order_by(
+            FileOperation.file_hash,
+            FileOperation.timestamp
+        )
     ).all()
+
+
+def create_processing_report(
+    session: Session,
+    data: dict
+) -> ProcessingReport:
+
+    torrent = None
+
+    if data.get("info_hash"):
+        torrent = find_by_info_hash(
+            session,
+            data["info_hash"]
+        )
+
+    report = ProcessingReport(
+        torrent_id=torrent.id if torrent else None,
+        info_hash=data.get("info_hash"),
+        file_hash=data.get("file_hash"),
+        media_type=data.get("media_type"),
+        source_path=data.get("source_path"),
+        destination_path=data.get("destination_path"),
+        success=data.get("success", False),
+        processing_time=data.get("processing_time"),
+        report_json=json.dumps(
+            data.get("report", {}),
+            default=str
+        )
+    )
+
+    session.add(report)
+    session.commit()
+    session.refresh(report)
+
+    return report
+
+
+def get_processing_reports(
+    session: Session,
+    info_hash: str
+):
+    return session.exec(
+        select(ProcessingReport)
+        .where(
+            ProcessingReport.info_hash == info_hash
+        )
+        .order_by(
+            desc(ProcessingReport.created_at)
+        )
+    ).all()
+
+
+def get_processing_report(
+    session: Session,
+    report_id: int
+):
+    return session.get(
+        ProcessingReport,
+        report_id
+    )

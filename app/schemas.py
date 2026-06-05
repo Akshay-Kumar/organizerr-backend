@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from typing import List
 
@@ -77,6 +77,15 @@ class FileOperationCreate(BaseModel):
     stage: Optional[str] = None
     progress: Optional[float] = None
     status: Optional[str] = None
+
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    duration_seconds: Optional[float] = None
+
+    speed: Optional[float] = None
+    eta: Optional[int] = None
+    details: Optional[str] = None
+
     updated_at: Optional[datetime] = None
 
 
@@ -105,6 +114,15 @@ class FileOperationOut(BaseModel):
     stage: Optional[str] = None
     progress: Optional[float] = None
     status: Optional[str] = None
+
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    duration_seconds: Optional[float] = None
+
+    speed: Optional[float] = None
+    eta: Optional[int] = None
+    details: Optional[str] = None
+
     updated_at: Optional[datetime] = None
 
     model_config = {
@@ -136,3 +154,26 @@ class UserOut(BaseModel):
 class TokenOut(BaseModel):
     access_token: str
     token_type: str
+
+
+class ProcessingReportCreate(BaseModel):
+    info_hash: str
+    file_hash: Optional[str] = None
+    media_type: Optional[str] = None
+    source_path: Optional[str] = None
+    destination_path: Optional[str] = None
+    success: bool = False
+    processing_time: Optional[float] = None
+    report: Dict[str, Any]
+
+
+class ProcessingReportOut(BaseModel):
+    id: int
+    torrent_id: Optional[int] = None
+    info_hash: Optional[str] = None
+    file_hash: Optional[str] = None
+    media_type: Optional[str] = None
+    success: bool
+    processing_time: Optional[float] = None
+    created_at: datetime
+    report_json: str

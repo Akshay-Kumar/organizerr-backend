@@ -1,25 +1,31 @@
 # app/api/torrents.py
 from datetime import datetime
-
+from typing import List
+from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends
 from sqlmodel import Session
-from typing import List
 
-from app.models import Torrent, User
-from app.schemas import TorrentUpdate, TorrentOut
-from app.utils.db import get_session
+from app.crud import (
+    get_torrent,
+    upsert_file_operation,
+    list_file_operations,
+    get_file_operations_by_hash,
+    create_processing_report
+)
+from app.models import User
+from app.qb_helper import get_qb
 from app.routers.auth import verify_token
-from app.qb_helper import get_qb  # qBittorrent helper
-from app.crud import get_torrent, get_file_operation_by_info_and_file_hash
-import json
-import os
-import logging
-from pathlib import Path
-from app.schemas import TorrentUpdate, TorrentOut, FileOperationCreate, FileOperationUpdate, FileOperationOut
-from app.crud import upsert_file_operation, list_file_operations, get_file_operations_by_hash
-from app.utils.ws import manager
+from app.schemas import (
+    TorrentUpdate,
+    TorrentOut,
+    FileOperationCreate,
+    FileOperationOut,
+    ProcessingReportCreate,
+    ProcessingReportOut
+)
+from app.utils.db import get_session
 from app.utils.logger import get_logger
-
+from app.utils.ws import manager
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api", tags=["torrents"])
@@ -182,34 +188,50 @@ async def create_or_update_file_operation(
 
     serialized_op = {}
     serialized_op = serialize_datetimes(op)
-    serialized_op["filename"] = (
-            serialized_op.get("source") or ""
-    ).split("\\")[-1]
-
-    serialized_op["updated_at"] = (
-        datetime.utcnow().isoformat()
-    )
+    serialized_op["filename"] = Path(
+        serialized_op.get("source") or ""
+    ).name
 
     await manager.broadcast({
         "type": "file_ops_update",
         "file_operation": serialized_op
     })
 
-    # 🔥 SEND SNAPSHOT (OPTIONAL BUT POWERFUL)
-    '''
-    ops = list_file_operations(session)
-
-    await manager.broadcast({
-        "type": "file_ops_snapshot",
-        "file_operations": [op.dict() for op in ops]
-    })
-    '''
-
     if data.get("status") == "failed":
-        logger.warning(f"File operation failed: {data}")
+        logger.warning(
+            f"File operation failed: {data}"
+        )
+
+    elif data.get("status") == "skipped":
+        logger.info(
+            f"File operation skipped: "
+            f"{data.get('source')}"
+        )
 
     return response
 
+
+@router.post(
+    "/processing-reports",
+    response_model=ProcessingReportOut
+)
+def create_report(
+    payload: ProcessingReportCreate,
+    session: Session = Depends(get_session),
+):
+    data = payload.dict()
+
+    response = create_processing_report(
+        session,
+        data
+    )
+
+    logger.info(
+        f"Processing report stored: "
+        f"{data.get('info_hash')}"
+    )
+
+    return response
 
 @router.get("/file-operations", response_model=List[FileOperationOut])
 def get_all_operations(

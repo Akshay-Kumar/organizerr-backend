@@ -1,6 +1,7 @@
 .env
 run_organizerr_backend.bat
 torrents.db
+torrents_backup.db
 uploads
 .idea
 logs
