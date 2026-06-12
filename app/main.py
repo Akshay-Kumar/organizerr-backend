@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi import UploadFile, File, Form, BackgroundTasks, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy import text
 from sqlmodel import SQLModel, Session
 from sqlmodel import select
@@ -32,6 +32,7 @@ from app.models import (
 from app.qb_helper import add_torrent, set_torrent_tags
 from app.routers import search_media, auth, torrents
 from app.routers.torrents import serialize_datetimes
+from app.routers import processing_reports
 from app.schemas import TorrentUpdate, TorrentOut, UserOut
 from app.utils import ws
 from app.utils.db import engine, get_session
@@ -64,6 +65,7 @@ app.include_router(ws.router)
 app.include_router(auth.router)
 app.include_router(torrents.router)
 app.include_router(health_router)
+app.include_router(processing_reports.router)
 
 # Logging
 logger = get_logger(__name__)
@@ -472,6 +474,13 @@ def get_all_torrents(
             session,
             t.info_hash or ""
         )
+        report_count = session.exec(
+            select(func.count())
+            .where(
+                ProcessingReport.torrent_id == t.id
+            )
+        ).one()
+
         out.append({
             "id": t.id,
             "user_id": t.user_id,
@@ -492,6 +501,7 @@ def get_all_torrents(
             "custom_metadata": t.get_custom_metadata(),
             "qb_added": t.qb_added,
             "qb_error": t.qb_error,
+            "report_count": report_count,
             "fileOperations": [
                 serialize_datetimes(op.dict())
                 for op in ops
