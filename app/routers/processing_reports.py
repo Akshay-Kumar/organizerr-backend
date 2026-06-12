@@ -36,9 +36,25 @@ def get_processing_reports(
         .limit(page_size)
     ).all()
 
-    total = session.exec(
+    total_reports = session.exec(
         select(func.count())
         .select_from(ProcessingReport)
+    ).one()
+
+    successful_reports = session.exec(
+        select(func.count())
+        .select_from(ProcessingReport)
+        .where(
+            ProcessingReport.success == True
+        )
+    ).one()
+
+    failed_reports = session.exec(
+        select(func.count())
+        .select_from(ProcessingReport)
+        .where(
+            ProcessingReport.success == False
+        )
     ).one()
 
     reports = []
@@ -74,7 +90,9 @@ def get_processing_reports(
 
     return {
         "items": reports,
-        "total": total,
+        "total": total_reports,
+        "successful": successful_reports,
+        "failed": failed_reports,
         "page": page,
         "page_size": page_size
     }
