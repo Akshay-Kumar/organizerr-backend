@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from app.utils.db import get_session
 from app.models import ProcessingReport, Torrent
-from sqlalchemy import func
+from sqlalchemy import func, or_
 router = APIRouter(
     prefix="/processing-reports",
     tags=["Processing Reports"]
@@ -15,11 +15,12 @@ router = APIRouter(
 def get_processing_reports(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
+    search: str = Query(None),
     session: Session = Depends(get_session)
 ):
     offset = (page - 1) * page_size
 
-    results = session.exec(
+    query = (
         select(
             ProcessingReport,
             Torrent.name
@@ -29,17 +30,32 @@ def get_processing_reports(
             ProcessingReport.torrent_id == Torrent.id,
             isouter=True
         )
+    )
+
+    if search:
+        search_term = f"%{search}%"
+
+        query = query.where(
+            or_(
+                ProcessingReport.source_path.ilike(search_term),
+                ProcessingReport.media_type.ilike(search_term),
+                Torrent.name.ilike(search_term)
+            )
+        )
+
+    total_reports = session.exec(
+        select(func.count())
+        .select_from(query.subquery())
+    ).one()
+
+    results = session.exec(
+        query
         .order_by(
             ProcessingReport.created_at.desc()
         )
         .offset(offset)
         .limit(page_size)
     ).all()
-
-    total_reports = session.exec(
-        select(func.count())
-        .select_from(ProcessingReport)
-    ).one()
 
     successful_reports = session.exec(
         select(func.count())
