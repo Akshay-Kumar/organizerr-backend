@@ -5,6 +5,8 @@ from app.models import (
     ProcessingReport,
     User
 )
+from sqlalchemy import func
+from sqlalchemy import or_
 from typing import Optional
 from datetime import datetime
 import json
@@ -60,38 +62,54 @@ def find_by_info_hash(session: Session, info_hash: str) -> Optional[Torrent]:
     return res
 
 def list_torrents(
-            session: Session,
-            current_user: User,
-            page: int = 1,
-            page_size: int = 25
-    ):
+    session: Session,
+    current_user: User,
+    page: int = 1,
+    page_size: int = 25,
+    search: str = None
+):
     if not current_user.is_active:
         return [], 0
 
     if current_user.is_admin:
         statement = select(Torrent)
-        count_statement = select(Torrent)
     else:
         statement = select(Torrent).where(
             Torrent.user_id == current_user.id
         )
 
-        count_statement = select(Torrent).where(
-            Torrent.user_id == current_user.id
+    #
+    # SEARCH
+    #
+    if search:
+        search = f"%{search}%"
+        statement = statement.where(
+            or_(
+                Torrent.name.ilike(search),
+                Torrent.correct_name.ilike(search),
+                Torrent.episode_title.ilike(search),
+                Torrent.info_hash.ilike(search)
+            )
         )
 
-    total = len(session.exec(count_statement).all())
+    #
+    # TOTAL COUNT
+    #
+    total = session.exec(
+        select(func.count())
+        .select_from(statement.subquery())
+    ).one()
 
+    #
+    # PAGINATION
+    #
     offset = (page - 1) * page_size
-
-    statement = (
+    items = session.exec(
         statement
         .order_by(desc(Torrent.created_at))
         .offset(offset)
         .limit(page_size)
-    )
-
-    items = session.exec(statement).all()
+    ).all()
 
     return items, total
 

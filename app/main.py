@@ -14,6 +14,7 @@ from sqlalchemy import select, func
 from sqlalchemy import text
 from sqlmodel import SQLModel, Session
 from sqlmodel import select
+from fastapi import Query
 
 from app.crud import (
     create_torrent,
@@ -457,6 +458,7 @@ async def add_torrents_batch(
 def get_all_torrents(
     page: int = 1,
     page_size: int = 25,
+    search: str = Query(None),
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
@@ -464,7 +466,8 @@ def get_all_torrents(
         session,
         current_user,
         page=page,
-        page_size=page_size
+        page_size=page_size,
+        search=search
     )
 
     out = []
