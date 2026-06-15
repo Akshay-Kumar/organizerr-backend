@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import List
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends
+from sqlmodel import select
 from sqlmodel import Session
 
 from app.crud import (
@@ -13,6 +14,7 @@ from app.crud import (
     create_processing_report
 )
 from app.models import User
+from app.models import FileOperation
 from app.qb_helper import get_qb
 from app.routers.auth import verify_token
 from app.schemas import (
@@ -225,6 +227,34 @@ def create_report(
         session,
         data
     )
+
+    # AUTO-HEAL STUCK STAGES
+    if data.get("success"):
+        stale_ops = session.exec(
+            select(FileOperation).where(
+                FileOperation.info_hash == data["info_hash"],
+                FileOperation.file_hash == data["file_hash"],
+                FileOperation.status == "processing"
+                #FileOperation.status.notin_(["completed", "failed"])
+            )
+        ).all()
+
+        for op in stale_ops:
+            op.status = "completed"
+            op.progress = 100
+            op.success = True
+
+            if not op.completed_at:
+                op.completed_at = datetime.utcnow()
+
+            if op.started_at:
+                op.duration_seconds = round(
+                    (op.completed_at - op.started_at).total_seconds(),
+                    2
+                )
+            session.add(op)
+
+        session.commit()
 
     logger.info(
         f"Processing report stored: "

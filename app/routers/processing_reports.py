@@ -73,12 +73,27 @@ def get_processing_reports(
         )
     ).one()
 
+    all_reports = session.exec(
+        select(ProcessingReport.report_json)
+    ).all()
+
+    skipped_reports = sum(
+        1
+        for r in all_reports
+        if r and '"skipped": true' in r.lower()
+    )
+
+    failed_reports = failed_reports - skipped_reports
+
     reports = []
     for report, torrent_name in results:
 
         report_dict = report.dict()
 
         parsed_title = None
+        is_skipped = False
+        skip_reason = None
+        warnings = []
 
         try:
             report_json = json.loads(
@@ -87,6 +102,20 @@ def get_processing_reports(
 
             parsed_title = report_json.get(
                 "title"
+            )
+
+            is_skipped = report_json.get(
+                "skipped",
+                False
+            )
+
+            skip_reason = report_json.get(
+                "skip_reason"
+            )
+
+            warnings = report_json.get(
+                "warnings",
+                []
             )
 
         except Exception:
@@ -102,6 +131,11 @@ def get_processing_reports(
         report_dict["torrent_name"] = torrent_name
         report_dict["parsed_title"] = parsed_title
         report_dict["source_filename"] = source_filename
+
+        report_dict["skipped"] = is_skipped
+        report_dict["skip_reason"] = skip_reason
+        report_dict["warnings"] = warnings
+
         reports.append(report_dict)
 
     return {
@@ -109,6 +143,7 @@ def get_processing_reports(
         "total": total_reports,
         "successful": successful_reports,
         "failed": failed_reports,
+        "skipped": skipped_reports,
         "page": page,
         "page_size": page_size
     }
@@ -158,12 +193,12 @@ def get_reports_for_torrent(
     ).all()
 
     reports = []
-
     for report, torrent_name in results:
-
         report_dict = report.dict()
-
         parsed_title = None
+        is_skipped = False
+        skip_reason = None
+        warnings = []
 
         try:
 
@@ -173,6 +208,20 @@ def get_reports_for_torrent(
 
             parsed_title = (
                 report_json.get("title")
+            )
+
+            is_skipped = report_json.get(
+                "skipped",
+                False
+            )
+
+            skip_reason = report_json.get(
+                "skip_reason"
+            )
+
+            warnings = report_json.get(
+                "warnings",
+                []
             )
 
         except Exception:
@@ -188,6 +237,10 @@ def get_reports_for_torrent(
         report_dict["torrent_name"] = torrent_name
         report_dict["source_filename"] = source_filename
         report_dict["parsed_title"] = parsed_title
+
+        report_dict["skipped"] = is_skipped
+        report_dict["skip_reason"] = skip_reason
+        report_dict["warnings"] = warnings
 
         reports.append(report_dict)
 

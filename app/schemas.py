@@ -83,7 +83,7 @@ class FileOperationCreate(BaseModel):
     duration_seconds: Optional[float] = None
 
     speed: Optional[float] = None
-    eta: Optional[int] = None
+    eta: Optional[float] = None
     details: Optional[str] = None
 
     updated_at: Optional[datetime] = None
@@ -120,7 +120,7 @@ class FileOperationOut(BaseModel):
     duration_seconds: Optional[float] = None
 
     speed: Optional[float] = None
-    eta: Optional[int] = None
+    eta: Optional[float] = None
     details: Optional[str] = None
 
     updated_at: Optional[datetime] = None

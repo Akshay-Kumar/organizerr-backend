@@ -450,66 +450,66 @@ async def ws_torrents(websocket: WebSocket, token: str):
                 getattr(t, "hash", "").lower(): t
                 for t in q_list
             }
+
             snapshot = []
+            user_id = user.get("user_id")
+            is_admin = user.get("is_admin", False)
 
-        user_id = user.get("user_id")
-        is_admin = user.get("is_admin", False)
+            for t in db_list:
+                if not (t.user_id == user_id or is_admin):
+                    continue
 
-        for t in db_list:
-            if not (t.user_id == user_id or is_admin):
-                continue
+                info_hash = (t.info_hash or "").lower()
+                live = live_map.get(info_hash)
 
-            info_hash = (t.info_hash or "").lower()
-            live = live_map.get(info_hash)
+                ops = get_file_operations_by_hash(
+                    session,
+                    info_hash
+                )
 
-            ops = get_file_operations_by_hash(
-                session,
-                info_hash
-            )
+                serialized_ops = [
+                    {
+                        **op.dict(),
 
-            serialized_ops = [
-                {
-                    **op.dict(),
+                        "timestamp":
+                            op.timestamp.isoformat()
+                            if op.timestamp
+                            else None,
 
-                    "timestamp":
-                        op.timestamp.isoformat()
-                        if op.timestamp
-                        else None,
+                        "updated_at":
+                            op.updated_at.isoformat()
+                            if op.updated_at
+                            else None,
 
-                    "updated_at":
-                        op.updated_at.isoformat()
-                        if op.updated_at
-                        else None,
+                        "started_at":
+                            op.started_at.isoformat()
+                            if op.started_at
+                            else None,
 
-                    "started_at":
-                        op.started_at.isoformat()
-                        if op.started_at
-                        else None,
+                        "completed_at":
+                            op.completed_at.isoformat()
+                            if op.completed_at
+                            else None,
+                    }
+                    for op in ops
+                ]
 
-                    "completed_at":
-                        op.completed_at.isoformat()
-                        if op.completed_at
-                        else None,
-                }
-                for op in ops
-            ]
+                snapshot.append({
+                    "id": t.id,
+                    "user_id": t.user_id,
+                    "hash": info_hash,
+                    "name": t.correct_name or t.name,
+                    "display_name": build_display_name(t),
+                    "progress": int(live.progress * 100) if live else 0,
+                    "state": live.state if live else "missing",
+                    "dlspeed": live.dlspeed if live else 0,
+                    "upspeed": live.upspeed if live else 0,
+                    "eta": live.eta if live else None,
+                    "poster": t.poster,
+                    "fileOperations": serialized_ops,
+                })
 
-            snapshot.append({
-                "id": t.id,
-                "user_id": t.user_id,
-                "hash": info_hash,
-                "name": t.correct_name or t.name,
-                "display_name": build_display_name(t),
-                "progress": int(live.progress * 100) if live else 0,
-                "state": live.state if live else "missing",
-                "dlspeed": live.dlspeed if live else 0,
-                "upspeed": live.upspeed if live else 0,
-                "eta": live.eta if live else None,
-                "poster": t.poster,
-                "fileOperations": serialized_ops,
-            })
-
-        snapshot.sort(key=lambda x: x["id"], reverse=True)
+            snapshot.sort(key=lambda x: x["id"], reverse=True)
 
         if websocket.client_state == WebSocketState.CONNECTED:
             await websocket.send_json({

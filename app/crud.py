@@ -240,7 +240,7 @@ def upsert_file_operation(
         # -----------------------------------
         # Stage completed / failed
         # -----------------------------------
-        if incoming_status in ["completed", "failed"]:
+        if incoming_status in ["completed", "failed", "skipped"]:
             existing.completed_at = datetime.utcnow()
 
             if existing.started_at:
