@@ -1,4 +1,4 @@
-# app/api/torrents.py
+# app/api/torrent.py
 from datetime import datetime
 from typing import List
 from pathlib import Path

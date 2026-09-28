@@ -27,13 +27,13 @@ from app.crud import (
 from app.models import (
     Torrent,
     User,
-    FileOperation,
     ProcessingReport
 )
 from app.qb_helper import add_torrent, set_torrent_tags
 from app.routers import search_media, auth, torrents
 from app.routers.torrents import serialize_datetimes
 from app.routers import processing_reports
+from app.routers import files
 from app.schemas import TorrentUpdate, TorrentOut, UserOut
 from app.utils import ws
 from app.utils.db import engine, get_session
@@ -43,6 +43,12 @@ from app.utils.logger import get_logger
 from app.utils.torrent_helpers import build_display_name
 from app.utils.torrent_utils import get_info_hash_from_file, parse_magnet
 from app.routers.health import router as health_router
+from app.routers.media_tasks import router as tasks_router
+from app.services.media_task_executor import (
+    MediaTaskExecutor
+)
+
+executor = MediaTaskExecutor()
 
 # Load environment variables
 load_dotenv()
@@ -67,6 +73,9 @@ app.include_router(auth.router)
 app.include_router(torrents.router)
 app.include_router(health_router)
 app.include_router(processing_reports.router)
+app.include_router(files.router)
+
+app.include_router(tasks_router)
 
 # Logging
 logger = get_logger(__name__)
@@ -92,6 +101,7 @@ async def ping():
 @app.on_event("startup")
 def on_startup():
     SQLModel.metadata.create_all(engine)
+    executor.start()
 
     # one-time migration
     with engine.connect() as conn:
